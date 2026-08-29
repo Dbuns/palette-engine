@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use Palette Engine in research, please cite the software repository."
+title: "Palette Engine"
+type: software
+authors:
+  - name: "Dbuns"
+version: 0.1.0
+repository-code: "https://github.com/Dbuns/palette-engine"
+url: "https://github.com/Dbuns/palette-engine"
+license: MIT

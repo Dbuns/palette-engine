@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "palette-engine"
+version = "0.1.0"
+description = "Generate balanced color palettes for scientific plotting."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {file = "LICENSE"}
+authors = [{name = "Dbuns"}]
+dependencies = [
+    "numpy>=1.19",
+    "matplotlib>=3.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/Dbuns/palette-engine"
+Repository = "https://github.com/Dbuns/palette-engine"
+
+[tool.setuptools]
+py-modules = ["colors_engine", "colors_source"]
