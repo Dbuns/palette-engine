@@ -4,7 +4,7 @@
 
 Plots should be part of scientific communication, not an afterthought. Yet figures and posters often display mismatched colors, weak contrast, overly heavy palettes, or the same default software colors repeated everywhere. Palette Engine is a small Python utility for choosing more deliberate combinations without rebuilding a color scheme for every graph.
 
-The repository includes 35 original palettes with two to five colors. It can return discrete Matplotlib colors, interpolate a larger continuous palette in CIELAB space, filter palettes against light or dark backgrounds, and provide approximate CMYK values for early print planning. Some examples of color combinations present in the tool:
+The repository includes 39 original palettes with two to five colors. It can return discrete Matplotlib colors, interpolate a larger continuous palette in CIELAB space, filter palettes against light or dark backgrounds, and provide approximate CMYK values for early print planning. Some examples of color combinations present in the tool:
 ![Six original four-color Palette Engine palettes](figures/palette-gallery.png)
 
 
@@ -14,7 +14,7 @@ The repository includes 35 original palettes with two to five colors. It can ret
 - returns normalized RGB tuples ready for Matplotlib
 - selects a suitable palette automatically or by stable ID
 - creates longer continuous palettes by perceptual interpolation
-- filters anchor colors by contrast against white, black, or a custom RGB background
+- can filter anchor colors by contrast against white, black, or a custom RGB background
 - provides approximate CMYK tuples for convenience
 - keeps every bundled color combination in one transparent, tested data file
 
@@ -70,6 +70,8 @@ colors, palette_id = get_palette(
     background="white",
 )
 ```
+
+Background filtering is optional. Omit `background` to use any palette of the requested size, or provide a background when you want every selected anchor color to meet the built-in contrast threshold.
 
 Generate 15 related colors from four anchors:
 
@@ -145,6 +147,7 @@ cmyk_colors, palette_id = get_palette(
 ```
 
 CMYK output is an approximate mathematical conversion from sRGB. Final print work should use an appropriate color profile and proofing workflow for the intended press, ink, and paper.
+The `background` setting applies only to screen colors and is ignored in print mode.
 
 ## Visual examples
 
@@ -165,7 +168,7 @@ Importing `plot_examples` does not create figures or open windows.
 
 ## Tests
 
-The automated suite checks the exact 35-palette collection, schema and value ranges, palette selection, interpolation, input validation, print output, and independent rendering of every plot example.
+The automated suite checks the exact 39-palette collection, schema and value ranges, palette selection, optional background filtering, interpolation, input validation, print output, and independent rendering of every plot example.
 
 ```bash
 python -m unittest discover -s tests -v
@@ -177,7 +180,7 @@ GitHub Actions runs the same checks on Python 3.11 and 3.13 for every push and p
 
 ```text
 palette-engine/
-├── colors_source.py       # the 35 original palettes
+├── colors_source.py       # the 39 original palettes
 ├── colors_engine.py       # selection, interpolation, and contrast tools
 ├── plot_examples.py       # independent plotting examples
 ├── figures/

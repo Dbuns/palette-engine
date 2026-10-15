@@ -38,7 +38,11 @@ EXPECTED_RGB = {
     "PE032": [(73, 97, 122), (208, 107, 88), (216, 174, 73), (120, 147, 107)],
     "PE033": [(94, 75, 117), (183, 99, 118), (108, 145, 124), (211, 155, 74)],
     "PE034": [(46, 95, 119), (111, 142, 88), (200, 111, 80), (167, 133, 166)],
-    "PE035": [(0, 107, 78), (230, 220, 194), (244, 180, 0)]
+    "PE035": [(0, 107, 78), (230, 220, 194), (244, 180, 0)],
+    "PE036": [(252, 248, 242), (26, 93, 116), (244, 190, 187)],
+    "PE037": [(193, 141, 23), (255, 213, 251), (128, 0, 0)],
+    "PE038": [(148, 182, 239), (230, 226, 121), (146, 75, 18)],
+    "PE039": [(255, 92, 52), (53, 30, 40), (215, 239, 255)]
 }
 
 
@@ -54,10 +58,10 @@ class PaletteDataTests(unittest.TestCase):
         counts = {size: 0 for size in range(2, 6)}
         for palette in palettes.values():
             counts[len(palette["colors"])] += 1
-        self.assertEqual(counts, {2: 17, 3: 7, 4: 6, 5: 5})
+        self.assertEqual(counts, {2: 17, 3: 11, 4: 6, 5: 5})
 
     def test_schema_ranges_roles_and_sources(self):
-        self.assertEqual(len(palettes), 35)
+        self.assertEqual(len(palettes), 39)
         allowed_sources = {"owner_curated_2026", "project_curated_2026"}
         for palette_id, palette in palettes.items():
             with self.subTest(palette_id=palette_id):
@@ -68,7 +72,7 @@ class PaletteDataTests(unittest.TestCase):
                 colors = palette["colors"]
                 self.assertGreaterEqual(len(colors), 2)
                 for color in colors.values():
-                    self.assertIsInstance(color["name"], str)
+                    self.assertEqual(set(color), {"rgb", "cmyk"})
                     self.assertEqual(len(color["rgb"]), 3)
                     self.assertTrue(all(isinstance(value, int) and 0 <= value <= 255 for value in color["rgb"]))
                     self.assertEqual(len(color["cmyk"]), 4)

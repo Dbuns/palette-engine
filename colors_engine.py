@@ -11,10 +11,9 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-from colors_source import palettes
 
 # -----------------------------
-# 1) COLOR–COLOR contrast: ΔE in CIELAB (CIE76)
+# 1) CIELAB conversion for interpolation
 # -----------------------------
 
 def _srgb_channel_to_linear(u: float) -> float:
@@ -91,30 +90,6 @@ def rgb255_to_lab(rgb):
 
     return (L, a, b)
 
-def delta_e_cie76(lab1, lab2) -> float:
-    """Euclidean distance in Lab (CIE76)."""
-    dL = lab1[0] - lab2[0]
-    da = lab1[1] - lab2[1]
-    db = lab1[2] - lab2[2]
-    return float(np.sqrt(dL*dL + da*da + db*db))
-
-def min_pairwise_delta_e(rgb_list_255) -> float:
-    """
-    rgb_list_255: list of (R,G,B) ints in 0–255.
-    Returns the minimum ΔE among all pairs (higher = more distinguishable).
-    """
-    labs = [rgb255_to_lab(rgb) for rgb in rgb_list_255]
-    n = len(labs)
-    if n < 2:
-        return float("inf")
-    min_de = float("inf")
-    for i in range(n):
-        for j in range(i + 1, n):
-            de = delta_e_cie76(labs[i], labs[j])
-            if de < min_de:
-                min_de = de
-    return min_de
-
 # -----------------------------
 # 2) COLOR–BACKGROUND contrast: WCAG contrast ratio
 # -----------------------------
@@ -124,20 +99,26 @@ DEFAULT_MIN_BG_CONTRAST = 1.7
 def _parse_background(background):
     """
     background can be:
-      - "white" or "black"
-      - (R,G,B) in 0–255 ints
+      - "white" or "black" (case-insensitive)
+      - (R,G,B) values in the 0–255 range
     Returns background_rgb_255 as (R,G,B) ints 0–255
     """
-    if background is None or background == "white":
-        return (255, 255, 255)
-    if background == "black":
-        return (0, 0, 0)
+    if isinstance(background, str):
+        background = background.lower().strip()
+        if background == "white":
+            return (255, 255, 255)
+        if background == "black":
+            return (0, 0, 0)
 
     if isinstance(background, (tuple, list)) and len(background) == 3:
-        r, g, b = background
-        return (int(r), int(g), int(b))
+        try:
+            values = tuple(int(channel) for channel in background)
+        except (TypeError, ValueError):
+            values = ()
+        if len(values) == 3 and all(0 <= channel <= 255 for channel in values):
+            return values
 
-    raise ValueError("background must be 'white', 'black', None, or an RGB tuple (0–255 ints)")
+    raise ValueError("background must be 'white', 'black', or an RGB tuple with values from 0 to 255")
 
 def relative_luminance(rgb):
     """
@@ -173,6 +154,53 @@ def min_contrast_vs_background(rgb_list, background_rgb=(255, 255, 255)) -> floa
     return float(min(ratios)) if ratios else float("inf")
 
 
+def _normalize_mode(mode: str) -> str:
+    """Return a validated screen ('s') or print ('p') mode."""
+    if not isinstance(mode, str):
+        raise ValueError("mode must be 's' or 'p'")
+    mode = mode.lower().strip()
+    if mode not in ("s", "p"):
+        raise ValueError("mode must be 's' or 'p'")
+    return mode
+
+
+def _validate_positive_int(value, name: str) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"{name} must be a positive int, got {value}")
+
+
+def _ordered_keys(palette: dict):
+    """Return color keys in dominant, secondary, accent, then source order."""
+    colors = palette["colors"]
+    roles = palette.get("roles", {}) or {}
+    ordered = []
+
+    dominant = roles.get("dominant")
+    if dominant in colors:
+        ordered.append(dominant)
+    ordered.extend(key for key in roles.get("secondary", []) if key in colors and key not in ordered)
+    ordered.extend(key for key in roles.get("accent", []) if key in colors and key not in ordered)
+    ordered.extend(key for key in colors if key not in ordered)
+    return ordered
+
+
+def _palette_satisfies(palette: dict, size: int, mode: str, background_rgb=None) -> bool:
+    """Check whether a palette can satisfy one validated request."""
+    colors = palette.get("colors", {})
+    keys = _ordered_keys(palette)[:size]
+    if len(keys) < size:
+        return False
+
+    if mode == "p":
+        return all(colors[key].get("cmyk") is not None for key in keys)
+
+    if background_rgb is None:
+        return True
+
+    rgb_values = [colors[key]["rgb"] for key in keys]
+    return min_contrast_vs_background(rgb_values, background_rgb) >= DEFAULT_MIN_BG_CONTRAST
+
+
 # -----------------------------
 # 3) UTILS
 # -----------------------------
@@ -181,103 +209,56 @@ def list_palettes(
     palettes: dict,
     size: int = 2,
     mode: str = "s",
-    background="white",
+    background=None,
 ):
     """
     Returns a list of palette IDs that can satisfy:
       - requested size
       - requested mode ('s' or 'p')
-      - background readability for screen mode (DEFAULT_MIN_BG_CONTRAST)
+      - optional background contrast for screen mode (DEFAULT_MIN_BG_CONTRAST)
     """
-    if not isinstance(mode, str):
-        raise ValueError("mode must be 's' or 'p'")
-    mode = mode.lower().strip()
-    if mode not in ("s", "p"):
-        raise ValueError("mode must be 's' or 'p'")
-
-    bg255 = _parse_background(background)
-
-    def role_order(p: dict):
-        colors = p["colors"]
-        keys_input = list(colors.keys())
-        roles = p.get("roles", {}) or {}
-
-        ordered = []
-        if "dominant" in roles and roles["dominant"] in colors:
-            ordered.append(roles["dominant"])
-        ordered += [k for k in roles.get("secondary", []) if k in colors]
-        ordered += [k for k in roles.get("accent", []) if k in colors]
-        for k in keys_input:
-            if k not in ordered:
-                ordered.append(k)
-        return ordered
-
-    def first_n_keys(p: dict):
-        ordered = role_order(p)
-        return ordered[:size]
-
-    def satisfies(p: dict) -> bool:
-        colors = p.get("colors", {})
-        if len(colors) < size:
-            return False
-
-        keys = first_n_keys(p)
-
-        if mode == "p":
-            # all returned colors must have CMYK
-            for k in keys:
-                if colors[k].get("cmyk", None) is None:
-                    return False
-            return True
-
-        # mode == "s": enforce background contrast
-        rgb255 = [colors[k]["rgb"] for k in keys]
-        return min_contrast_vs_background(rgb255, background_rgb=bg255) >= DEFAULT_MIN_BG_CONTRAST
-
-    return [pid for pid, p in palettes.items() if satisfies(p)]
+    _validate_positive_int(size, "size")
+    mode = _normalize_mode(mode)
+    background_rgb = _parse_background(background) if mode == "s" and background is not None else None
+    return [
+        palette_id
+        for palette_id, palette in palettes.items()
+        if _palette_satisfies(palette, size, mode, background_rgb)
+    ]
 
 
 def show_palettes(
     palettes: dict,
     size: int = 2,
     mode: str = "s",
-    background="white",
-    max_rows: int = 30,
+    background=None,
+    max_rows=None,
     figsize=None,
 ):
     """
-    Visual gallery of palettes that satisfy list_palettes(...) constraints.
+    Visual gallery of screen palettes that satisfy list_palettes(...) constraints.
     - Rows of rectangles
     - Dominant emphasized (thicker border + slightly larger width)
     """
+    mode = _normalize_mode(mode)
+    if mode != "s":
+        raise ValueError("show_palettes only supports mode='s'; CMYK values cannot be displayed directly")
+    if max_rows is not None:
+        _validate_positive_int(max_rows, "max_rows")
+
     ids = list_palettes(palettes, size=size, mode=mode, background=background)
-    ids = ids[:max_rows]
+    if max_rows is not None:
+        ids = ids[:max_rows]
 
     if not ids:
         raise ValueError("No palettes matched the current constraints.")
 
-    bg255 = _parse_background(background)
+    bg255 = (255, 255, 255) if background is None else _parse_background(background)
     bg01 = (bg255[0]/255.0, bg255[1]/255.0, bg255[2]/255.0)
 
     # decide label text color based on background
     bg_lum = relative_luminance(bg255)
     label_color = "white" if bg_lum < 0.5 else "black"
-
-    # Helpers (same ordering logic)
-    def role_order(p: dict):
-        colors = p["colors"]
-        keys_input = list(colors.keys())
-        roles = p.get("roles", {}) or {}
-
-        ordered = []
-        if "dominant" in roles and roles["dominant"] in colors:
-            ordered.append(roles["dominant"])
-        ordered += [k for k in roles.get("secondary", []) if k in colors]
-        ordered += [k for k in roles.get("accent", []) if k in colors]
-        for k in keys_input:
-            if k not in ordered:
-                ordered.append(k)
-        return ordered
 
     # figure sizing
     n = len(ids)
@@ -305,7 +286,7 @@ def show_palettes(
         roles = p.get("roles", {}) or {}
         dom = roles.get("dominant", None)
 
-        keys = role_order(p)[:size]
+        keys = _ordered_keys(p)[:size]
 
         # weight dominant a bit more
         weights = []
@@ -327,12 +308,8 @@ def show_palettes(
             frac = w / total_w
             width = (x1 - x0) * frac
 
-            if mode == "s":
-                r, g, b = colors[k]["rgb"]
-                face = (r/255.0, g/255.0, b/255.0)
-            else:
-                r, g, b = colors[k]["rgb"]
-                face = (r/255.0, g/255.0, b/255.0)
+            r, g, b = colors[k]["rgb"]
+            face = (r/255.0, g/255.0, b/255.0)
 
             # dominant: thicker border
             lw = 0.8 if (dom is not None and k == dom) else 0.7
@@ -399,7 +376,7 @@ def get_palette(
     n_out: int = None,
     palette_id: str = 'r',
     mode: str = "s",
-    background="white",
+    background=None,
 ):
     """
     palette_id:
@@ -414,93 +391,50 @@ def get_palette(
         'p' -> list of CMYK tuples (as stored; typically 0–100 ints)
 
     background:
-        "white", "black", None, or RGB tuple (0–255 ints).
-        Enforced only for mode='s' using DEFAULT_MIN_BG_CONTRAST.
+        "white", "black", or RGB tuple (0–255 ints).
+        When provided in screen mode, colors must pass DEFAULT_MIN_BG_CONTRAST.
+        None disables background filtering.
 
     Returns:
         (list_of_colors, palette_id)
     """
-    if not isinstance(mode, str):
-        raise ValueError("mode must be 's' (screen) or 'p' (print)")
-    mode = mode.lower().strip()
-    if mode not in ("s", "p"):
-        raise ValueError("mode must be 's' (screen) or 'p' (print)")
+    _validate_positive_int(size, "size")
+    mode = _normalize_mode(mode)
 
     if n_out is None:
         n_out = size
-    if not isinstance(n_out, int) or n_out <= 0:
-        raise ValueError(f"n_out must be a positive int, got {n_out}")
+    _validate_positive_int(n_out, "n_out")
     if mode == "p" and n_out != size:
         raise ValueError("For mode='p' (print), n_out must equal size (continuous print not implemented).")
 
-    if not isinstance(size, int) or size <= 0:
-        raise ValueError(f"size must be a positive int, got {size}")
-
-    bg255 = _parse_background(background)
-
-    def role_order(p: dict):
-        colors = p["colors"]
-        keys_input = list(colors.keys())
-        roles = p.get("roles", {}) or {}
-
-        ordered = []
-        if "dominant" in roles and roles["dominant"] in colors:
-            ordered.append(roles["dominant"])
-        ordered += [k for k in roles.get("secondary", []) if k in colors]
-        ordered += [k for k in roles.get("accent", []) if k in colors]
-        for k in keys_input:
-            if k not in ordered:
-                ordered.append(k)
-        return ordered
-
-    def first_n_rgb255(p: dict):
-        colors = p["colors"]
-        ordered = role_order(p)
-        out = []
-        for k in ordered:
-            out.append(colors[k]["rgb"])  # stored as 0–255
-            if len(out) == size:
-                break
-        return out
-
-    def palette_satisfies(p: dict):
-        colors = p.get("colors", {})
-        if len(colors) < size:
-            return False
-
-        if mode == "p":
-            ordered = role_order(p)
-            cmyk_ok = [colors[k].get("cmyk", None) is not None for k in ordered]
-            return sum(cmyk_ok) >= size
-
-        # mode == "s": enforce background contrast
-        rgb255 = first_n_rgb255(p)
-        if len(rgb255) < size:
-            return False
-        return min_contrast_vs_background(rgb255, background_rgb=bg255) >= DEFAULT_MIN_BG_CONTRAST
+    background_rgb = _parse_background(background) if mode == "s" and background is not None else None
 
     # pick palette
     if palette_id == 'r':
-        candidates = [pid for pid, p in palettes.items() if palette_satisfies(p)]
+        candidates = [
+            pid
+            for pid, palette in palettes.items()
+            if _palette_satisfies(palette, size, mode, background_rgb)
+        ]
         if not candidates:
-            raise ValueError(
-                f"No palettes found with at least {size} colors for mode='{mode}' "
-                f"passing background contrast >= {DEFAULT_MIN_BG_CONTRAST} on background={background}"
-            )
+            detail = ""
+            if background_rgb is not None:
+                detail = f" passing background contrast >= {DEFAULT_MIN_BG_CONTRAST} on background={background}"
+            raise ValueError(f"No palettes found with at least {size} colors for mode='{mode}'{detail}")
         palette_id = random.choice(candidates)
 
     if palette_id not in palettes:
         raise KeyError(f"palette_id '{palette_id}' not found")
 
     p = palettes[palette_id]
-    if not palette_satisfies(p):
-        raise ValueError(
-            f"Palette '{palette_id}' cannot satisfy size={size} for mode='{mode}' "
-            f"with background contrast >= {DEFAULT_MIN_BG_CONTRAST} on background={background}"
-        )
+    if not _palette_satisfies(p, size, mode, background_rgb):
+        detail = ""
+        if background_rgb is not None:
+            detail = f" with background contrast >= {DEFAULT_MIN_BG_CONTRAST} on background={background}"
+        raise ValueError(f"Palette '{palette_id}' cannot satisfy size={size} for mode='{mode}'{detail}")
 
     colors = p["colors"]
-    ordered_keys = role_order(p)
+    ordered_keys = _ordered_keys(p)
 
     if mode == "s":
         # 1) pick anchors (RGB 0–255)
@@ -522,15 +456,7 @@ def get_palette(
 
 
     # mode == "p"
-    out = []
-    for k in ordered_keys:
-        cmyk = colors[k].get("cmyk", None)
-        if cmyk is not None:
-            out.append(tuple(cmyk))
-            if len(out) == size:
-                break
-
-    return out, palette_id
+    return [tuple(colors[key]["cmyk"]) for key in ordered_keys[:size]], palette_id
 # -----------------------------
 # END OF CODE
 # -----------------------------
